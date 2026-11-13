@@ -1,0 +1,62 @@
+name: CI/CD FastAPI - Homologacao e Producao
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/fastapi-app
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build e Push da Imagem
+        run: |
+          docker build -t ${{ env.IMAGE_NAME }}:latest .
+          docker push ${{ env.IMAGE_NAME }}:latest
+
+  deploy_homologacao:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - name: Deploy Homologação (Porta 8080)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOMOL_EC2_HOST }}
+          username: ${{ secrets.HOMOL_EC2_USERNAME }}
+          key: ${{ secrets.HOMOL_EC2_KEY }}
+          script: |
+            docker pull ${{ env.IMAGE_NAME }}:latest
+            docker stop app-homol || true
+            docker rm app-homol || true
+            docker run -d --name app-homol -p 8080:8000 ${{ env.IMAGE_NAME }}:latest
+
+  deploy_producao:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Deploy Produção (Porta 80)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            docker pull ${{ env.IMAGE_NAME }}:latest
+            docker stop app-prod || true
+            docker rm app-prod || true
+            docker run -d --name app-prod -p 80:8000 ${{ env.IMAGE_NAME }}:latest
